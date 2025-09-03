@@ -1,54 +1,83 @@
+# rabbit.py  — Wiki Corkboard (One-note view)
+# Fix: use a requests.Session with a real User-Agent so Wikipedia doesn't 403.
+
 import random
-import re
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 from urllib.parse import quote, unquote
+from time import sleep
 
 WIKI_REST = "https://en.wikipedia.org/api/rest_v1"
 WIKI_BASE = "https://en.wikipedia.org"
 
+# ---------- HTTP session (important!) ----------
+SESSION = requests.Session()
+SESSION.headers.update({
+    "User-Agent": "WikiCorkboard/1.0 (contact: your_email@example.com)",
+    "Accept": "application/json, text/html;q=0.9"
+})
+
+def _get(url, tries=3, timeout=12):
+    """Small helper with polite retry for rate limits."""
+    for i in range(tries):
+        r = SESSION.get(url, timeout=timeout)
+        # Retry on 429/503; otherwise raise for other 4xx/5xx
+        if r.status_code in (429, 503):
+            sleep(1.5 * (i + 1))
+            continue
+        r.raise_for_status()
+        return r
+    # Final attempt raise if still bad
+    r.raise_for_status()
+    return r
+
 # -------------- Helpers --------------
 
 def get_random_summary():
-    r = requests.get(f"{WIKI_REST}/page/random/summary", timeout=10)
-    r.raise_for_status()
-    return r.json()  # contains title, extract, content_urls, etc.
+    # REST random summary
+    r = _get(f"{WIKI_REST}/page/random/summary")
+    return r.json()
 
 def get_summary_by_title(title: str):
-    r = requests.get(f"{WIKI_REST}/page/summary/{quote(title)}", timeout=10)
-    if r.status_code == 404:
-        # sometimes Summary misses; fallback to random
+    r = _get(f"{WIKI_REST}/page/summary/{quote(title)}")
+    # Some titles may 404 in the REST summary API; fall back to random.
+    if r.status_code == 404:  # defensive; requests would have raised above normally
         return get_random_summary()
-    r.raise_for_status()
     return r.json()
 
 def get_internal_links(title: str, max_links: int = 5):
     """Return up to max_links internal Wikipedia links from the page HTML."""
-    html = requests.get(f"{WIKI_REST}/page/html/{quote(title)}", timeout=10)
-    if html.status_code != 200:
-        return []
+    html = _get(f"{WIKI_REST}/page/html/{quote(title)}")
 
     soup = BeautifulSoup(html.text, "html.parser")
     candidates = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        # Keep only /wiki/... links (internal), exclude fragments, files, help, categories, portals, talk, special, etc.
+
+        # Keep only internal content links like /wiki/Alan_Turing
         if not href.startswith("/wiki/"):
             continue
-        if ":" in href.split("/wiki/")[-1]:  # filter namespaces like File:, Help:, Category:, etc.
+
+        # Filter namespaces like File:, Help:, Category:, Special:, Talk:, etc.
+        tail = href.split("/wiki/")[-1]
+        if ":" in tail:
             continue
+
         if href.startswith("/wiki/Main_Page"):
             continue
+
         text = a.get_text(strip=True)
         if not text or len(text) < 2:
             continue
+
         candidates.append(href)
 
     # Deduplicate while keeping randomness
     candidates = list(dict.fromkeys(candidates))
     random.shuffle(candidates)
     keep = candidates[: max_links * 3]  # over-sample then clean titles
+
     titles = []
     seen = set()
     for href in keep:
@@ -88,9 +117,6 @@ st.markdown(
     }
     .extract {
         font-size: 1rem; line-height: 1.55; color: #333; margin-bottom: 10px;
-    }
-    .links button[kind="primary"] {
-        margin: 4px 4px 0 0;
     }
     .crumbs {
         font-size: .9rem; color: #555; margin-bottom: 10px;
@@ -181,7 +207,8 @@ else:
     cols = st.columns(5)
     for i, link_title in enumerate(st.session_state.current_links[:5]):
         with cols[i]:
-            if st.button(link_title[:22] + ("…" if len(link_title) > 22 else ""), key=f"link_{i}"):
+            label = link_title[:22] + ("…" if len(link_title) > 22 else "")
+            if st.button(label, key=f"link_{i}"):
                 js2 = get_summary_by_title(link_title)
                 t2, ex2, u2 = note_from_summary(js2)
                 st.session_state.current = t2
