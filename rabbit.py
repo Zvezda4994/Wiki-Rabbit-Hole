@@ -1,5 +1,5 @@
-# rabbit.py  — Wiki Corkboard (One-note view)
-# Fix: use a requests.Session with a real User-Agent so Wikipedia doesn't 403.
+# rabbit.py — Wiki Corkboard (One-note view)
+# Streamlit app to hop Wikipedia like a detective corkboard.
 
 import random
 import requests
@@ -19,138 +19,116 @@ SESSION.headers.update({
 })
 
 def _get(url, tries=3, timeout=12):
-    """Small helper with polite retry for rate limits."""
+    """Tiny helper with polite retry for 429/503."""
     for i in range(tries):
         r = SESSION.get(url, timeout=timeout)
-        # Retry on 429/503; otherwise raise for other 4xx/5xx
         if r.status_code in (429, 503):
             sleep(1.5 * (i + 1))
             continue
         r.raise_for_status()
         return r
-    # Final attempt raise if still bad
     r.raise_for_status()
     return r
 
 # -------------- Helpers --------------
 
 def get_random_summary():
-    # REST random summary
     r = _get(f"{WIKI_REST}/page/random/summary")
     return r.json()
 
 def get_summary_by_title(title: str):
     r = _get(f"{WIKI_REST}/page/summary/{quote(title)}")
-    # Some titles may 404 in the REST summary API; fall back to random.
-    if r.status_code == 404:  # defensive; requests would have raised above normally
-        return get_random_summary()
     return r.json()
 
 def get_internal_links(title: str, max_links: int = 5):
     """
-    Return up to max_links internal Wikipedia links from a page.
-    1) Parse REST /page/html (handles /wiki/... and ./...).
-    2) If none found, fall back to Action API ?action=parse&prop=links.
+    Return up to max_links internal links from the page as (target_title, nice_label) pairs.
+    - Accept /wiki/... and ./... hrefs from Parsoid HTML
+    - Strip fragments (#...) and query strings (?...)
+    - Skip namespaces (File:, Help:, Category:, etc.), Main_Page, and self-links
+    - If nothing found, fall back to Action API links that actually exist
     """
     # --- Attempt 1: REST HTML (Parsoid) ---
     try:
         html = _get(f"{WIKI_REST}/page/html/{quote(title)}")
         soup = BeautifulSoup(html.text, "html.parser")
-        candidates = []
 
+        pairs = []
+        seen = set()
+
+        # Redlinks in Parsoid usually have class "new" and often use /w/index.php?...&redlink=1
+        # but sometimes the href still looks like /wiki/Foo?redlink=1 — strip querystrings either way.
         for a in soup.find_all("a", href=True):
             href = a["href"].strip()
-            text = a.get_text(strip=True)
-            if not text or len(text) < 2:
+            label = a.get_text(" ", strip=True)
+            if not label or len(label) < 2:
                 continue
 
-            # Accept both forms used in Parsoid HTML
+            # Normalize href -> tail title component
             if href.startswith("/wiki/"):
                 tail = href.split("/wiki/", 1)[1]
             elif href.startswith("./"):
-                tail = href[2:]  # "./Foo" -> "Foo"
+                tail = href[2:]
             else:
                 continue
 
-            # Clean: drop fragment, namespaces (File:, Help:, Category:, etc.), Main_Page, self
+            # Drop fragment and querystring
             tail = tail.split("#", 1)[0]
-            if not tail or ":" in tail:
+            tail = tail.split("?", 1)[0]
+            if not tail:
                 continue
+
+            # Skip namespaces (File:, Help:, Category:, Special:, Talk:, Portal:, etc.)
+            if ":" in tail:
+                continue
+
+            # Skip Main Page
             if tail == "Main_Page":
                 continue
 
             decoded = unquote(tail)
-            if decoded.replace("_", " ") == title.replace("_", " "):
+
+            # Skip self-links
+            if decoded.replace("_", " ").lower() == title.replace("_", " ").lower():
                 continue
 
-            candidates.append(decoded)
+            # If anchor has class "new" it's a redlink (missing page) — skip
+            if "new" in (a.get("class") or []):
+                continue
 
-        # dedupe + shuffle
-        candidates = list(dict.fromkeys(candidates))
-        random.shuffle(candidates)
+            # Clean the label
+            nice = label.replace("_", " ").strip()
+            if nice.lower() in {"edit", "citation needed", "help", "see also"}:
+                continue
 
-        if candidates:
-            return candidates[:max_links]
+            if decoded not in seen:
+                seen.add(decoded)
+                pairs.append((decoded, nice))
+
+            if len(pairs) >= max_links * 3:  # oversample a bit
+                break
+
+        random.shuffle(pairs)
+        if pairs:
+            return pairs[:max_links]
     except Exception:
-        pass  # fall through to Action API
+        pass  # fall through
 
-    # --- Attempt 2: Action API fallback ---
+    # --- Attempt 2: Action API fallback (only existing pages) ---
     try:
         url = ("https://en.wikipedia.org/w/api.php"
                f"?action=parse&page={quote(title)}&prop=links&format=json")
         r = _get(url)
         data = r.json()
         links = data.get("parse", {}).get("links", [])
-        # ns==0 => main/article namespace only
-        titles = [l["*"] for l in links if l.get("ns") == 0 and l.get("*")]
+        # Keep only main-namespace links that EXIST (have the 'exists' flag)
+        titles = [l["*"] for l in links if l.get("ns") == 0 and l.get("*") and ("exists" in l)]
         titles = list(dict.fromkeys(titles))
         random.shuffle(titles)
-        return titles[:max_links]
+        # Label = title with spaces (good enough)
+        return [(t, t.replace("_", " ")) for t in titles[:max_links]]
     except Exception:
         return []
-
-    """Return up to max_links internal Wikipedia links from the page HTML."""
-    html = _get(f"{WIKI_REST}/page/html/{quote(title)}")
-
-    soup = BeautifulSoup(html.text, "html.parser")
-    candidates = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-
-        # Keep only internal content links like /wiki/Alan_Turing
-        if not href.startswith("/wiki/"):
-            continue
-
-        # Filter namespaces like File:, Help:, Category:, Special:, Talk:, etc.
-        tail = href.split("/wiki/")[-1]
-        if ":" in tail:
-            continue
-
-        if href.startswith("/wiki/Main_Page"):
-            continue
-
-        text = a.get_text(strip=True)
-        if not text or len(text) < 2:
-            continue
-
-        candidates.append(href)
-
-    # Deduplicate while keeping randomness
-    candidates = list(dict.fromkeys(candidates))
-    random.shuffle(candidates)
-    keep = candidates[: max_links * 3]  # over-sample then clean titles
-
-    titles = []
-    seen = set()
-    for href in keep:
-        # /wiki/Alan_Turing#Early_life → Alan_Turing
-        t = unquote(href.split("/wiki/")[-1].split("#")[0])
-        if t and t not in seen:
-            seen.add(t)
-            titles.append(t)
-        if len(titles) >= max_links:
-            break
-    return titles
 
 def note_from_summary(js):
     title = js.get("title", "Untitled")
@@ -162,7 +140,6 @@ def note_from_summary(js):
 
 st.set_page_config(page_title="Wiki Corkboard", page_icon="🧶", layout="centered")
 
-# light detective-board aesthetic via inline CSS
 st.markdown(
     """
     <style>
@@ -174,15 +151,9 @@ st.markdown(
         box-shadow: 2px 4px 0 rgba(0,0,0,0.12);
         font-family: ui-serif, Georgia, 'Times New Roman', serif;
     }
-    .title {
-        font-size: 1.35rem; font-weight: 700; margin-bottom: 6px;
-    }
-    .extract {
-        font-size: 1rem; line-height: 1.55; color: #333; margin-bottom: 10px;
-    }
-    .crumbs {
-        font-size: .9rem; color: #555; margin-bottom: 10px;
-    }
+    .title { font-size: 1.35rem; font-weight: 700; margin-bottom: 6px; }
+    .extract { font-size: 1rem; line-height: 1.55; color: #333; margin-bottom: 10px; }
+    .crumbs { font-size: .9rem; color: #bbb; margin-bottom: 10px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -191,9 +162,9 @@ st.markdown(
 st.title("🧶 Wiki Corkboard (One-note view)")
 
 if "stack" not in st.session_state:
-    st.session_state.stack = []     # stack of titles visited (breadcrumb)
+    st.session_state.stack = []
 if "current" not in st.session_state:
-    st.session_state.current = None # current article title
+    st.session_state.current = None
 
 # Controls row
 col1, col2, col3 = st.columns([1,1,2])
@@ -208,7 +179,6 @@ with col1:
 
 with col2:
     if st.button("↩️ Back", disabled=len(st.session_state.stack) <= 1):
-        # pop current, show previous
         if len(st.session_state.stack) > 1:
             st.session_state.stack.pop()
             prev = st.session_state.stack[-1]
@@ -250,7 +220,7 @@ if st.session_state.stack:
     crumbs = "  ›  ".join(st.session_state.stack[-6:])
     st.markdown(f'<div class="crumbs">Path: {crumbs}</div>', unsafe_allow_html=True)
 
-# Render the “note”
+# Render the note
 title, extract, url = st.session_state.current_data
 with st.container():
     st.markdown('<div class="note">', unsafe_allow_html=True)
@@ -263,21 +233,22 @@ st.write("")  # spacer
 
 # Link choices (5 random internal links)
 st.subheader("Pick a lead:")
-if not st.session_state.current_links:
+links = st.session_state.current_links
+if not links:
     st.info("No links found on this page. Hit **Random start** or **Back**.")
 else:
     cols = st.columns(5)
-    for i, link_title in enumerate(st.session_state.current_links[:5]):
+    for i, (next_title, nice_label) in enumerate(links[:5]):
+        label = (nice_label[:24] + "…") if len(nice_label) > 25 else nice_label
         with cols[i]:
-            label = link_title[:22] + ("…" if len(link_title) > 22 else "")
             if st.button(label, key=f"link_{i}"):
-                js2 = get_summary_by_title(link_title)
+                js2 = get_summary_by_title(next_title)
                 t2, ex2, u2 = note_from_summary(js2)
                 st.session_state.current = t2
                 st.session_state.stack.append(t2)
                 st.session_state.current_data = (t2, ex2, u2)
                 st.session_state.current_links = get_internal_links(t2)
 
-# Refresh choices (reshuffle links from current)
+# Reshuffle
 if st.button("Shuffle leads 🔀"):
     st.session_state.current_links = get_internal_links(st.session_state.current)
