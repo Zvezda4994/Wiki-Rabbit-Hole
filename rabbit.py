@@ -47,6 +47,68 @@ def get_summary_by_title(title: str):
     return r.json()
 
 def get_internal_links(title: str, max_links: int = 5):
+    """
+    Return up to max_links internal Wikipedia links from a page.
+    1) Parse REST /page/html (handles /wiki/... and ./...).
+    2) If none found, fall back to Action API ?action=parse&prop=links.
+    """
+    # --- Attempt 1: REST HTML (Parsoid) ---
+    try:
+        html = _get(f"{WIKI_REST}/page/html/{quote(title)}")
+        soup = BeautifulSoup(html.text, "html.parser")
+        candidates = []
+
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            text = a.get_text(strip=True)
+            if not text or len(text) < 2:
+                continue
+
+            # Accept both forms used in Parsoid HTML
+            if href.startswith("/wiki/"):
+                tail = href.split("/wiki/", 1)[1]
+            elif href.startswith("./"):
+                tail = href[2:]  # "./Foo" -> "Foo"
+            else:
+                continue
+
+            # Clean: drop fragment, namespaces (File:, Help:, Category:, etc.), Main_Page, self
+            tail = tail.split("#", 1)[0]
+            if not tail or ":" in tail:
+                continue
+            if tail == "Main_Page":
+                continue
+
+            decoded = unquote(tail)
+            if decoded.replace("_", " ") == title.replace("_", " "):
+                continue
+
+            candidates.append(decoded)
+
+        # dedupe + shuffle
+        candidates = list(dict.fromkeys(candidates))
+        random.shuffle(candidates)
+
+        if candidates:
+            return candidates[:max_links]
+    except Exception:
+        pass  # fall through to Action API
+
+    # --- Attempt 2: Action API fallback ---
+    try:
+        url = ("https://en.wikipedia.org/w/api.php"
+               f"?action=parse&page={quote(title)}&prop=links&format=json")
+        r = _get(url)
+        data = r.json()
+        links = data.get("parse", {}).get("links", [])
+        # ns==0 => main/article namespace only
+        titles = [l["*"] for l in links if l.get("ns") == 0 and l.get("*")]
+        titles = list(dict.fromkeys(titles))
+        random.shuffle(titles)
+        return titles[:max_links]
+    except Exception:
+        return []
+
     """Return up to max_links internal Wikipedia links from the page HTML."""
     html = _get(f"{WIKI_REST}/page/html/{quote(title)}")
 
