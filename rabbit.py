@@ -11,14 +11,14 @@ from time import sleep
 WIKI_REST = "https://en.wikipedia.org/api/rest_v1"
 WIKI_BASE = "https://en.wikipedia.org"
 
-# ---------- HTTP session (important!) ----------
+# Shared HTTP session
 SESSION = requests.Session()
-SESSION.headers.update({
-    "User-Agent": "WikiCorkboard/1.0 (contact: your_email@example.com)",
-    "Accept": "application/json, text/html;q=0.9"
+SESSION.headers.update({ #default headers
+    "User-Agent": "WikiCorkboard/1.0 (contact: your_email@example.com)", # Identify yourself
+    "Accept": "application/json, text/html;q=0.9" # JSON preferred, HTML for Parsoid
 })
 
-def _get(url, tries=3, timeout=12):
+def _get(url, tries=3, timeout=12): # helper to retry
     """Tiny helper with polite retry for 429/503."""
     for i in range(tries):
         r = SESSION.get(url, timeout=timeout)
@@ -28,19 +28,19 @@ def _get(url, tries=3, timeout=12):
         r.raise_for_status()
         return r
     r.raise_for_status()
-    return r
+    return r # should not reach here
 
-# -------------- Helpers --------------
+# Helpers
 
-def get_random_summary():
-    r = _get(f"{WIKI_REST}/page/random/summary")
-    return r.json()
+def get_random_summary(): # get a random article summary (JSON)
+    r = _get(f"{WIKI_REST}/page/random/summary") # call through retrier method
+    return r.json() # return parsed JSON
 
-def get_summary_by_title(title: str):
+def get_summary_by_title(title: str): # get article summary by specific title (JSON)
     r = _get(f"{WIKI_REST}/page/summary/{quote(title)}")
-    return r.json()
+    return r.json() # return parsed JSON to dict
 
-def get_internal_links(title: str, max_links: int = 5):
+def get_internal_links(title: str, max_links: int = 5): # get internal links from article given title
     """
     Return up to max_links internal links from the page as (target_title, nice_label) pairs.
     - Accept /wiki/... and ./... hrefs from Parsoid HTML
@@ -48,23 +48,23 @@ def get_internal_links(title: str, max_links: int = 5):
     - Skip namespaces (File:, Help:, Category:, etc.), Main_Page, and self-links
     - If nothing found, fall back to Action API links that actually exist
     """
-    # --- Attempt 1: REST HTML (Parsoid) ---
+    # Attempt 1: REST HTML (Parsoid)
     try:
-        html = _get(f"{WIKI_REST}/page/html/{quote(title)}")
-        soup = BeautifulSoup(html.text, "html.parser")
+        html = _get(f"{WIKI_REST}/page/html/{quote(title)}") # fetch HTML version of the page
+        soup = BeautifulSoup(html.text, "html.parser") # parse with BeautifulSoup 
 
-        pairs = []
-        seen = set()
+        pairs = [] # for (title, label) pairs
+        seen = set() # to avoid duplicates
 
         # Redlinks in Parsoid usually have class "new" and often use /w/index.php?...&redlink=1
-        # but sometimes the href still looks like /wiki/Foo?redlink=1 — strip querystrings either way.
-        for a in soup.find_all("a", href=True):
-            href = a["href"].strip()
-            label = a.get_text(" ", strip=True)
-            if not label or len(label) < 2:
+        # but sometimes the href still looks like /wiki/Foo?redlink=1 — this strips querystrings either way.
+        for a in soup.find_all("a", href=True): # iterate over all anchor tags with href
+            href = a["href"].strip() # get link
+            label = a.get_text(" ", strip=True) # get text 
+            if not label or len(label) < 2: # skip empty or too short labels
                 continue
 
-            # Normalize href -> tail title component
+            # Only consider /wiki/... and ./... links
             if href.startswith("/wiki/"):
                 tail = href.split("/wiki/", 1)[1]
             elif href.startswith("./"):
@@ -72,10 +72,10 @@ def get_internal_links(title: str, max_links: int = 5):
             else:
                 continue
 
-            # Drop fragment and querystring
+            # Strip fragment and query
             tail = tail.split("#", 1)[0]
             tail = tail.split("?", 1)[0]
-            if not tail:
+            if not tail: # nothing left, skip
                 continue
 
             # Skip namespaces (File:, Help:, Category:, Special:, Talk:, Portal:, etc.)
@@ -86,7 +86,7 @@ def get_internal_links(title: str, max_links: int = 5):
             if tail == "Main_Page":
                 continue
 
-            decoded = unquote(tail)
+            decoded = unquote(tail) # decode URL-encoded parts
 
             # Skip self-links
             if decoded.replace("_", " ").lower() == title.replace("_", " ").lower():
@@ -101,9 +101,9 @@ def get_internal_links(title: str, max_links: int = 5):
             if nice.lower() in {"edit", "citation needed", "help", "see also"}:
                 continue
 
-            if decoded not in seen:
-                seen.add(decoded)
-                pairs.append((decoded, nice))
+            if decoded not in seen: #check for duplicates
+                seen.add(decoded) 
+                pairs.append((decoded, nice)) # add to pairs
 
             if len(pairs) >= max_links * 3:  # oversample a bit
                 break
@@ -114,29 +114,29 @@ def get_internal_links(title: str, max_links: int = 5):
     except Exception:
         pass  # fall through
 
-    # --- Attempt 2: Action API fallback (only existing pages) ---
+    # Attempt 2: Action API fallback (only existing pages)
     try:
         url = ("https://en.wikipedia.org/w/api.php"
-               f"?action=parse&page={quote(title)}&prop=links&format=json")
-        r = _get(url)
-        data = r.json()
-        links = data.get("parse", {}).get("links", [])
+               f"?action=parse&page={quote(title)}&prop=links&format=json") # get links via Action API
+        r = _get(url) # fetch with retrier helper
+        data = r.json() # parse JSON
+        links = data.get("parse", {}).get("links", []) # get links list
         # Keep only main-namespace links that EXIST (have the 'exists' flag)
-        titles = [l["*"] for l in links if l.get("ns") == 0 and l.get("*") and ("exists" in l)]
-        titles = list(dict.fromkeys(titles))
-        random.shuffle(titles)
+        titles = [l["*"] for l in links if l.get("ns") == 0 and l.get("*") and ("exists" in l)] # filter for main namespace and existence
+        titles = list(dict.fromkeys(titles)) # deduplicate while preserving order
+        random.shuffle(titles) # just randomise
         # Label = title with spaces (good enough)
-        return [(t, t.replace("_", " ")) for t in titles[:max_links]]
+        return [(t, t.replace("_", " ")) for t in titles[:max_links]] # return up to max_links
     except Exception:
-        return []
+        return [] # no links available
 
-def note_from_summary(js):
-    title = js.get("title", "Untitled")
-    extract = js.get("extract", "(No summary available.)")
-    url = js.get("content_urls", {}).get("desktop", {}).get("page", f"{WIKI_BASE}/wiki/{quote(title)}")
-    return title, extract, url
+def note_from_summary(js): # extract title, extract, and URL from summary JSON
+    title = js.get("title", "Untitled") # get title
+    extract = js.get("extract", "(No summary available.)") # get extract
+    url = js.get("content_urls", {}).get("desktop", {}).get("page", f"{WIKI_BASE}/wiki/{quote(title)}") # get URL
+    return title, extract, url # return all three in a tuple
 
-# -------------- UI --------------
+#  UI 
 
 st.set_page_config(page_title="Wiki Corkboard", page_icon="🧶", layout="centered")
 
