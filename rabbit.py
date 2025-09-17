@@ -289,12 +289,19 @@ st.write("")
 
 st.subheader("Pick a lead:")
 links = st.session_state.current_links
+
 if not links:
     st.info("No links found on this page. Hit **Random start** or **Back**.")
 else:
-    st.markdown('<div class="lead-zone">', unsafe_allow_html=True)
-    cols = st.columns(5)
-    for i, (next_title, nice_label) in enumerate(links[:5]):
+    # center the row by adding spacer columns on both sides
+    items = links[:5]
+    n = len(items)
+    # build ratios: [spacer, 1,1,...(n times), spacer]
+    ratios = [0.5] + [1] * n + [0.5]
+    cols = st.columns(ratios)
+
+    # render buttons into the middle columns (skip [0] and the last)
+    for i, (next_title, nice_label) in enumerate(items, start=1):
         label = (nice_label[:28] + "…") if len(nice_label) > 29 else nice_label
         with cols[i]:
             if st.button(label, key=f"link_{i}"):
@@ -310,6 +317,7 @@ else:
                         st.session_state.current_links = get_internal_links(t2)
                 except Exception:
                     st.error("That lead fizzled. Try another.")
+
     st.markdown('</div>', unsafe_allow_html=True)
 
 if st.button("Shuffle leads 🔀"):
