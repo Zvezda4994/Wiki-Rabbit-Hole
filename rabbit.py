@@ -294,39 +294,29 @@ if not links:
     st.info("No links found on this page. Hit **Random start** or **Back**.")
 else:
     items = links[:5]
-    n = len(items)
+    cols = st.columns(5, gap="large")  # fixed 5 equal-width slots, even gaps
 
-    # 9 columns: 5 button slots with 4 spacer slots between them
-    # tweak spacer ratio if you want tighter/looser gaps
-    col_ratios = [1, 0.5, 1, 0.5, 1, 0.5, 1, 0.5, 1]
-    cols = st.columns(col_ratios)
+    for idx in range(5):
+        with cols[idx]:
+            if idx < len(items):
+                next_title, nice_label = items[idx]
+                label = (nice_label[:28] + "…") if len(nice_label) > 29 else nice_label
+                if st.button(label, key=f"lead_{idx}"):
+                    try:
+                        with st.spinner("Following lead…"):
+                            js2 = safe_get_summary(next_title)
+                            t2, ex2, u2 = note_from_summary(js2)
+                            st.session_state.current = t2
+                            st.session_state.stack.append(t2)
+                            if len(st.session_state.stack) > 200:
+                                st.session_state.stack = st.session_state.stack[-200:]
+                            st.session_state.current_data = (t2, ex2, u2)
+                            st.session_state.current_links = get_internal_links(t2)
+                    except Exception:
+                        st.error("That lead fizzled. Try another.")
+            else:
+                st.write("")  # empty placeholder keeps box spacing
 
-    # which column indices should hold buttons for 1..5 items
-    slots_for_n = {
-        1: [4],
-        2: [3, 5],
-        3: [2, 4, 6],
-        4: [1, 3, 5, 7],
-        5: [0, 2, 4, 6, 8],
-    }
-    slot_idxs = slots_for_n[n]
-
-    for (next_title, nice_label), slot in zip(items, slot_idxs):
-        label = (nice_label[:28] + "…") if len(nice_label) > 29 else nice_label
-        with cols[slot]:
-            if st.button(label, key=f"lead_{slot}"):
-                try:
-                    with st.spinner("Following lead…"):
-                        js2 = safe_get_summary(next_title)
-                        t2, ex2, u2 = note_from_summary(js2)
-                        st.session_state.current = t2
-                        st.session_state.stack.append(t2)
-                        if len(st.session_state.stack) > 200:
-                            st.session_state.stack = st.session_state.stack[-200:]
-                        st.session_state.current_data = (t2, ex2, u2)
-                        st.session_state.current_links = get_internal_links(t2)
-                except Exception:
-                    st.error("That lead fizzled. Try another.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
