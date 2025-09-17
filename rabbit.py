@@ -169,22 +169,20 @@ st.markdown(
     .title { font-size: 1.35rem; font-weight: 800; margin-bottom: 8px; }
     .extract { font-size: 1rem; line-height: 1.6; color: #2a2a2a; margin-bottom: 10px; }
     .crumbs { font-size: .9rem; color: #777; margin-bottom: 10px; }
-
-    /* fixed-size buttons everywhere */
-    .stButton > button {
+    .lead-zone .stButton>button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 60px;
         width: 100%;
-        height: 72px;           /* fixed box height */
         text-align: center;
-        white-space: normal;     /* allow wrapping */
-        overflow: hidden;        /* clip overflow */
+        overflow: hidden;
         text-overflow: ellipsis;
+        white-space: normal;
         line-height: 1.2;
-        display: -webkit-box;    /* enable line clamp */
-        -webkit-line-clamp: 3;   /* up to 3 lines then ellipsis */
-        -webkit-box-orient: vertical;
     }
-
-    .toolbar .stButton>button { width: 100%; height: 40px; }
+    .lead-zone .stButton { width: 100%; }
+    .toolbar .stButton>button { width: 100%; }
     .main-actions .stButton>button { width: 100%; height: 40px; }
     </style>
     """,
@@ -295,14 +293,18 @@ if not links:
     st.info("No links found on this page. Hit **Random start** or **Back**.")
 else:
     items = links[:5]
-    cols = st.columns(5, gap="large")  # 5 fixed, equal slots across
+    n = len(items)
+    total_cols = 5
+    left_pad = (total_cols - n) // 2
+    cols = st.columns([1] * total_cols)
 
-    for idx in range(5):
+    for idx in range(total_cols):
         with cols[idx]:
-            if idx < len(items):
-                next_title, nice_label = items[idx]
+            k = idx - left_pad
+            if 0 <= k < n:
+                next_title, nice_label = items[k]
                 label = (nice_label[:28] + "…") if len(nice_label) > 29 else nice_label
-                if st.button(label, key=f"lead_{idx}"):
+                if st.button(label, key=f"lead_{k}"):
                     try:
                         with st.spinner("Following lead…"):
                             js2 = safe_get_summary(next_title)
