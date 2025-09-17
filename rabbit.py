@@ -293,18 +293,28 @@ links = st.session_state.current_links
 if not links:
     st.info("No links found on this page. Hit **Random start** or **Back**.")
 else:
-    # center the row by adding spacer columns on both sides
     items = links[:5]
     n = len(items)
-    # build ratios: [spacer, 1,1,...(n times), spacer]
-    ratios = [0.5] + [1] * n + [0.5]
-    cols = st.columns(ratios)
 
-    # render buttons into the middle columns (skip [0] and the last)
-    for i, (next_title, nice_label) in enumerate(items, start=1):
+    # 9 columns: 5 button slots with 4 spacer slots between them
+    # tweak spacer ratio if you want tighter/looser gaps
+    col_ratios = [1, 0.5, 1, 0.5, 1, 0.5, 1, 0.5, 1]
+    cols = st.columns(col_ratios)
+
+    # which column indices should hold buttons for 1..5 items
+    slots_for_n = {
+        1: [4],
+        2: [3, 5],
+        3: [2, 4, 6],
+        4: [1, 3, 5, 7],
+        5: [0, 2, 4, 6, 8],
+    }
+    slot_idxs = slots_for_n[n]
+
+    for (next_title, nice_label), slot in zip(items, slot_idxs):
         label = (nice_label[:28] + "…") if len(nice_label) > 29 else nice_label
-        with cols[i]:
-            if st.button(label, key=f"link_{i}"):
+        with cols[slot]:
+            if st.button(label, key=f"lead_{slot}"):
                 try:
                     with st.spinner("Following lead…"):
                         js2 = safe_get_summary(next_title)
