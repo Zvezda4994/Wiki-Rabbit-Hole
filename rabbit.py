@@ -3,6 +3,7 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 from urllib.parse import quote, unquote
+from html import escape
 from time import sleep
 
 WIKI_REST = "https://en.wikipedia.org/api/rest_v1"
@@ -169,12 +170,16 @@ st.markdown(
     .extract { font-size: 1rem; line-height: 1.6; color: #2a2a2a; margin-bottom: 10px; }
     .crumbs { font-size: .9rem; color: #777; margin-bottom: 10px; }
     .lead-zone .stButton>button {
-        height: 56px;
-        max-width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 60px;
         width: 100%;
+        text-align: center;
         overflow: hidden;
         text-overflow: ellipsis;
-        white-space: nowrap;
+        white-space: normal;
+        line-height: 1.2;
     }
     .lead-zone .stButton { width: 100%; }
     .toolbar .stButton>button { width: 100%; }
@@ -269,13 +274,16 @@ if st.session_state.get("stack"):
     crumbs = "  ›  ".join(st.session_state.stack[-6:])
     st.markdown(f'<div class="crumbs">Path: {crumbs}</div>', unsafe_allow_html=True)
 
+# unified yellow note block
 title, extract, url = st.session_state.current_data
-with st.container():
-    st.markdown('<div class="note">', unsafe_allow_html=True)
-    st.markdown(f'<div class="title">{title}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="extract">{extract}</div>', unsafe_allow_html=True)
-    st.markdown(f'[Open on Wikipedia]({url})', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+html_block = f'''
+<div class="note">
+    <div class="title">{escape(title)}</div>
+    <div class="extract">{escape(extract)}</div>
+    <a href="{escape(url, quote=True)}" target="_blank" rel="noopener">Open on Wikipedia</a>
+</div>
+'''
+st.markdown(html_block, unsafe_allow_html=True)
 
 st.write("")
 
