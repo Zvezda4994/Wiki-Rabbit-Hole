@@ -169,20 +169,22 @@ st.markdown(
     .title { font-size: 1.35rem; font-weight: 800; margin-bottom: 8px; }
     .extract { font-size: 1rem; line-height: 1.6; color: #2a2a2a; margin-bottom: 10px; }
     .crumbs { font-size: .9rem; color: #777; margin-bottom: 10px; }
-    .lead-zone .stButton>button {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 60px;
+
+    /* fixed-size buttons everywhere */
+    .stButton > button {
         width: 100%;
+        height: 72px;           /* fixed box height */
         text-align: center;
-        overflow: hidden;
+        white-space: normal;     /* allow wrapping */
+        overflow: hidden;        /* clip overflow */
         text-overflow: ellipsis;
-        white-space: normal;
         line-height: 1.2;
+        display: -webkit-box;    /* enable line clamp */
+        -webkit-line-clamp: 3;   /* up to 3 lines then ellipsis */
+        -webkit-box-orient: vertical;
     }
-    .lead-zone .stButton { width: 100%; }
-    .toolbar .stButton>button { width: 100%; }
+
+    .toolbar .stButton>button { width: 100%; height: 40px; }
     .main-actions .stButton>button { width: 100%; height: 40px; }
     </style>
     """,
@@ -289,12 +291,11 @@ st.write("")
 
 st.subheader("Pick a lead:")
 links = st.session_state.current_links
-
 if not links:
     st.info("No links found on this page. Hit **Random start** or **Back**.")
 else:
     items = links[:5]
-    cols = st.columns(5, gap="large")  # fixed 5 equal-width slots, even gaps
+    cols = st.columns(5, gap="large")  # 5 fixed, equal slots across
 
     for idx in range(5):
         with cols[idx]:
@@ -315,10 +316,7 @@ else:
                     except Exception:
                         st.error("That lead fizzled. Try another.")
             else:
-                st.write("")  # empty placeholder keeps box spacing
-
-
-    st.markdown('</div>', unsafe_allow_html=True)
+                st.write("")
 
 if st.button("Shuffle leads 🔀"):
     try:
